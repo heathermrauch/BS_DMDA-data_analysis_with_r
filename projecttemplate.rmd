@@ -1,0 +1,991 @@
+---
+output: html_document
+---
+Wine Quality Exploration by Heather Rauch
+========================================================
+
+```{r packages, echo=FALSE, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(gridExtra)
+library(Hmisc)
+library(psych)
+library(dplyr)
+library(plot3D)
+library(RColorBrewer)
+```
+
+```{r user_defined_functions, echo=FALSE, message=FALSE, warning=FALSE}
+outliers <- function(x) {
+  # function to set the upper and lower limit for detecting outliers
+  q1 <- quantile(x)[2] # first quantile
+  q3 <- quantile(x)[4] # third quantile
+  ll <- q1 - 1.5 * IQR(x) # lower limit
+  ul <- q3 + 1.5 * IQR(x) # upper limit
+  return(c(ll, ul))
+}
+hist_outliers <- function(data, x, binwidth = 1) {
+  # function to produce a two-plot grid containing one histogram with the lower
+  # and upper limits marked for outlier detection. The second plot is the same
+  # as the first, except it is zoomed in to the non-outlier data.
+  p1 <- ggplot(aes(x = x), data = data) +
+    geom_histogram(binwidth = binwidth) +
+    geom_vline(xintercept = outliers(x)[[1]], color = I('red')) +
+    geom_vline(xintercept = outliers(x)[[2]], color = I('red'))
+  p2 <- p1 + coord_cartesian(xlim = c(outliers(x)[[1]], outliers(x)[[2]]))
+return(grid.arrange(p1, p2, ncol = 2))
+}
+extract_legend <- function(p) {
+  # function to extract the legend from a plot
+  # https://statisticsglobe.com/add-common-legend-to-combined-ggplot2-plots-in-r#first
+  step1 <- ggplot_gtable(ggplot_build(p))
+  step2 <- which(sapply(step1$grobs, function(x) x$name) == 'guide-box')
+  step3 <- step1$grobs[[step2]]
+  return(step3)
+}
+```
+
+```{r Load_the_Data, echo=FALSE, message=FALSE, warning=FALSE}
+# Load the Data
+wine <- read.csv('wineQualityWhites.csv')
+```
+
+This report will explore data about 11 chemical properties and the average rating for 4898 different white wines.
+
+# Univariate Plots Section
+
+```{r summary, echo=FALSE, message=FALSE, warning=FALSE}
+# List the dimensions
+dim(wine)
+
+# Print the data structure
+str(wine)
+
+# Print the five number summary for each variable
+summary(wine)
+```
+
+The dataset consists of 13 variables with 4898 observations.
+
+## fixed.acidity
+
+```{r fixed.acidity, echo=FALSE, message=FALSE, warning=FALSE, fig.height=2, fig.width=7}
+# Plot the distribution with and without outliers
+hist_outliers(wine, wine$fixed.acidity, binwidth = 0.1)
+
+# Print the 5 number summary
+summary(wine$fixed.acidity)
+```
+
+The fixed acidity distribution is slightly skewed in the positive direction. The red lines were added to detect statistical outliers with a lower limit of 4.8 and an upper limit of 8.8. When zoomed to exclude outliers, the distribution looks much more normal with the majority of values falling between about 6.3 and 7.3.
+
+## volatile.acidity
+
+```{r volatile.acidity, echo=FALSE, error=FALSE, message=FALSE, fig.height=2, fig.width=7}
+# Plot the distribution with and without outliers
+hist_outliers(wine, wine$volatile.acidity, binwidth = 0.01)
+
+# Print the 5 number summary
+summary(wine$volatile.acidity)
+```
+
+The volatile.acidity distribution is far more skewed in the positive direction than the fixed.acidity distribution. The majority of values appear to fall between about 0.21 and 0.32.
+
+## citric.acid
+
+```{r citric.acid, echo=FALSE, message=FALSE, warning=FALSE, fig.height=2, fig.width=7}
+# Plot the distribution with and without outliers
+hist_outliers(wine, wine$citric.acid, binwidth = 0.01)
+
+# Print the 5 number summary
+summary(wine$citric.acid)
+
+# Filter to the spike at 0.49
+ca5 <- subset(wine, wine$citric.acid == 0.49)
+
+# Compare the spike's 5 number summary to the entire dataset
+summary(wine)
+summary(ca5)
+```
+
+Like the other acidity attributes, the citric.acid distribution is skewed in the positive direction with the majority of values falling between about 0.27 and 0.39. However, there is a very noticeable spike at 0.49 with over 200 observations. However subsetting this data and comparing the summary to the original does not reveal any major differences.
+
+## residual.sugar
+
+```{r residual.sugar, echo=FALSE, message=FALSE, warning=FALSE, fig.height=2, fig.width=7}
+# Plot the distribution with and without outliers
+hist_outliers(wine, wine$residual.sugar, binwidth = 0.1)
+```
+
+This distribution is most definitely not normal and standard outlier detection techniques did not help. It looks like a more custom approach needs to be taken.
+
+```{r residual.sugar.custom, echo=FALSE, message=FALSE, warning=FALSE}
+# Plot the log10 transformed distribution with Q1-Q3 as vertical lines
+ggplot(aes(x = residual.sugar), data = wine) +
+  geom_histogram(binwidth = 0.05) +
+  geom_vline(xintercept = quantile(wine$residual.sugar)[2]) +
+  geom_vline(xintercept = median(wine$residual.sugar)) +
+  geom_vline(xintercept = quantile(wine$residual.sugar)[4]) +
+  scale_x_log10(breaks = c(0.55, 1, 1.7, 3, 5.5, 10, 17, 30, 55))
+
+# Print the five number summary
+summary(wine$residual.sugar)
+```
+
+Viewing the same data on a log10 transformed scale allows us to get a better view of the distribution. Additionally, there are three lines visible on the plot. They are, in order from left to right, quartile 1, median, and quartile 3. The transformed distribution appears bimodal with peaks near quartiles 1 and 3. I wonder how this would look by sweetness category.
+
+```{r residual.sugar.sweetness, echo=FALSE, message=FALSE, warning=FALSE}
+# Create the sweetness variable based on residual.sugar
+wine <- wine %>% 
+  mutate(sweetness = case_when(residual.sugar < 4 ~ 'dry',
+                               residual.sugar < 12 ~ 'medium dry',
+                               residual.sugar < 45 ~ 'medium',
+                               TRUE ~ 'sweet'))
+
+# Turn sweetness into an ordered factor
+wine$sweetness <- factor(wine$sweetness, 
+                         levels = c('dry', 'medium dry', 'medium', 'sweet'),
+                         ordered = TRUE)
+
+# Plot the distribution
+ggplot(aes(x = sweetness), data = wine) + geom_histogram(stat = 'count') 
+```
+
+The European Union defines the sweetness terms of wine as follows:
+  
+  * Dry < 4 g/L of sugar
+  * Medium dry 4-12 g/L of sugar
+  * Medium 12-45 g/L of sugar
+  * Sweet > 45 g/L of sugar
+
+[Official Journal of the European Union](https://eur-lex.europa.eu/LexUriServ/LexUriServ.do?uri=OJ:L:2006:384:0038:0043:EN:PDF)
+
+The majority of the wines in this dataset are either dry or medium dry. There is only a single observation in the sweet category. 
+
+```{r residual.sugar.by.sweetness, echo=FALSE, message=FALSE, warning=FALSE}
+# Plot the residual sugar distribution by sweetness group
+ggplot(aes(x = residual.sugar), data = wine) + geom_histogram(binwidth = 0.1) +
+  facet_wrap(~sweetness, ncol = 2, scales = 'free')
+
+# Print the 5 number summary for each sweetness group
+by(wine$residual.sugar, wine$sweetness, summary)
+```
+
+There is only one wine in the sweet grouping, but the dry, medium dry, and medium groups all have much different distributions than just residual.sugar plotted alone. The residual.sugar in dry wines appears to capture the left mode of the initial plot. This distribution is slightly skewed in the positive direction, but is mostly normal. The medium dry and medium plots appear to need a bit more work. I'll look at each individually to see if we can make better sense of it. 
+
+```{r medium.dry, echo=FALSE, message=FALSE, warning=FALSE}
+# Plot residual.sugar distribution for medium dry sweetness category
+# Include Q1-Q3 as vertical lines
+ggplot(aes(x = residual.sugar), 
+             data = subset(wine, wine$sweetness == 'medium dry')) +
+  geom_histogram(binwidth = 0.5) +
+  scale_x_continuous(breaks = seq(4, 12, 1)) +
+  geom_vline(
+    xintercept = quantile(
+      subset(wine, wine$sweetness == 'medium dry')$residual.sugar, 0.25
+    )
+  ) +
+  geom_vline(
+    xintercept = median(
+      subset(wine, wine$sweetness == 'medium dry')$residual.sugar
+    )
+  ) +
+  geom_vline(
+    xintercept = quantile(
+      subset(wine, wine$sweetness == 'medium dry')$residual.sugar, 0.75
+    )
+  )
+
+# Print 5 number summary
+summary(subset(wine, wine$sweetness == 'medium dry')$residual.sugar)
+```
+
+The residual.sugar distribution within the medium dry sweetness group is much more normal than the unfiltered plot, however, it is still positively skewed. The majority of medium dry wines have between 5.7 and 9.2 g/L of residual.sugar.
+
+```{r medium, echo=FALSE, message=FALSE, warning=FALSE, fig.height=2, fig.width=7}
+# Plot the residual sugar distribution for the medium sweetness group
+hist_outliers(subset(wine, wine$sweetness == 'medium'), 
+              subset(wine, wine$sweetness == 'medium')$residual.sugar,
+              binwidth = 0.1)
+
+# Print the 5 number summary
+summary(subset(wine, wine$sweetness == 'medium')$residual.sugar)
+```
+
+The residual.sugar distribution for medium sweetness wines is far more skewed in the positive direction than medium dry wines. When zooming in to view non-outliers, the distribution appears slightly less skewed. The majority of values fall between 13 and 16.2 g/L of residual.sugar.
+
+## chlorides
+
+```{r chlorides, echo=FALSE, message=FALSE, warning=FALSE, fig.height=2, fig.width=7}
+# Plot the distribution with and without outliers
+hist_outliers(wine, wine$chlorides, binwidth = 0.001)
+
+# Print the 5 number summary
+summary(wine$chlorides)
+```
+
+The chloride distribution is heavily skewed in the positive direction. Zooming in on the non-outliers, we see that most values fall between approximately 0.036 and 0.05. 
+
+## free.sulfur.dioxide
+
+```{r free.sulfur.dioxide, echo=FALSE, message=FALSE, warning=FALSE, fig.height=2, fig.width=7}
+# Plot the distribution with and without outliers
+hist_outliers(wine, wine$free.sulfur.dioxide)
+
+# Print the 5 number summary
+summary(wine$free.sulfur.dioxide)
+```
+
+The distribution of free.sulfur.dioxide is positively skewed by a number of outliers. Aside from the outliers, the distribution is mostly normal, with the majority of values landing between 23 and 46.
+
+## total.sulfur.dioxide
+
+```{r total.sulfur.dioxide, echo=FALSE, message=FALSE, warning=FALSE, fig.height=2, fig.width=7}
+# Plot the distribution with and without outliers
+hist_outliers(wine, wine$total.sulfur.dioxide)
+
+# Print the 5 number summary
+summary(wine$total.sulfur.dioxide)
+```
+
+Once again, aside from the outliers pulling positively, the distribution is  normal with most values falling between 108 and 168.
+
+## density
+
+```{r density, echo = FALSE, message=FALSE, warning=FALSE, fig.height=2, fig.width=7}
+# Plot the distribution with and without outliers
+hist_outliers(wine, wine$density, binwidth = 0.0002)
+
+# Print the 5 number summary
+summary(wine$density)
+```
+
+The density is dependent on the alcohol and sugar content, so that will be investigated later. Other than that, the distribution is positively skewed by outliers. Viewing only the non-outliers, this distribution still isn't quite normal. The right side has the familiar stairstep pattern seen elsewhere.
+
+## pH
+```{r pH, echo=FALSE, message=FALSE, warning=FALSE, fig.height=2, fig.width=7}
+# Plot the distribution with and without outliers
+hist_outliers(wine, wine$pH, binwidth = 0.02)
+
+# Print the 5 number summary
+summary(wine$pH)
+```
+
+The right tail of the pH distribution is a bit longer than the left. Other than that, it is normally distributed with the majority of values between 3.09 and 3.28. a very faint stair-step pattern in seen in this plot on the right side. This same pattern is evident in the sugar and alcohol plots, suggesting a possible relationship.
+
+## sulphates
+
+```{r sulphates, echo=FALSE, message=FALSE, warning=FALSE, fig.height=2, fig.width=7}
+# Plot the distribution with and without outliers
+hist_outliers(wine, wine$sulphates, binwidth = 0.01)
+
+# Print the 5 number summary
+summary(wine$sulphates)
+```
+
+The sulphates distribution is fairly normal with a slight tail on the right consisting mostly of outliers. The majority of values fall between 0.41 and 0.55.
+
+## alcohol
+
+```{r alcohol, echo=FALSE, message=FALSE, warning=FALSE, fig.height=2, fig.width=7}
+# Plot the distribution with and without outliers
+hist_outliers(wine, wine$alcohol, binwidth = 0.2)
+
+# Print the 5 number summary
+summary(wine$alcohol)
+```
+
+The distribution of alcohol does not contain any outliers. Because of this, the zoomed in plot is nearly identical to the initial plot. This one needs a custom plot to get a better view of the distribution.
+
+```{r alcohol.custom, echo=FALSE, message=FALSE, warning=FALSE}
+# Plot the distribution with Q1-Q3 as vertical lines
+ggplot(aes(x = alcohol), data = wine) +
+  geom_histogram(binwidth = 0.2) +
+  geom_vline(xintercept = quantile(wine$alcohol)[2]) +
+  geom_vline(xintercept = median(wine$alcohol)) +
+  geom_vline(xintercept = quantile(wine$alcohol)[4])+
+  scale_x_continuous(breaks = seq(8, 14, 1))
+
+# Print the 5 number summary
+summary(wine$alcohol)
+```
+
+The same techniques were used in this plot as previous custom plots, with the 1st quartile, median and 3rd quartile displayed with black lines. The distribution for alcohol has a stair-step pattern like we saw earlier in the density distribution. This makes sense since the density is dependent on alcohol. The majority of values fall between 9.5 and 11.4.
+
+## quality
+
+```{r quality, echo=FALSE, message=FALSE, warning=FALSE}
+# Plot the distribution across the quality ratings
+ggplot(aes(x = quality), data = wine) +
+  geom_histogram(stat = 'count') +
+  scale_x_binned(breaks = seq(0, 10, 1))
+
+# Print the 5 number summary
+summary(wine$quality)
+```
+
+All of the previous variables have been continuous and held information about properties of the wine. This variable, however, is discreet, since it represents the ten point scale on which the wines were rated. The distribution appears to be normal with most values between 5 and 6.
+
+# Univariate Analysis
+
+### What is the structure of your dataset?
+This dataset contains observations about 4,898 rated white wines. 11 of the variables are attributes of the wine itself, like the acidity and sulphate content. One of the variables is the average of three ratings for each wine on a scale of one to ten.
+
+### What is/are the main feature(s) of interest in your dataset?
+The primary features of interest in this dataset are the quality rating and the wine attributes which contribute to it. This analysis will identify which variables have the most impact on the wine quality as well as whether those variables themselves are related.
+
+### What other features in the dataset do you think will help support your investigation into your feature(s) of interest?
+The variables which probably have the most impact on the rating will also contribute to the taste of the wine. Some of those attributes are volatile.acidity, which can add a vinegar taste in large quantities; citric.acid, which is known to give a wine a "fresh" flavor; residual.sugar and chlorides since sugar and salt directly impact taste, total.sulfur.dioxide, which also contributes to the nose and taste; and the alcohol content, because alcohol is usually an evident taste in wine.
+
+### Did you create any new variables from existing variables in the dataset?
+I created the ordered factor, sweetness, to align with the European Union's definition of wine sweetness categories by residual sugar measured in grams of sugar per Liter of wine. 
+
+### Of the features you investigated, were there any unusual distributions? Did you perform any operations on the data to tidy, adjust, or change the form of the data? If so, why did you do this?
+To generally asses each wine attribute, I created a function which calculates the variable's outlier thresholds using the following equations:
+  
+*  Lower Limit = Quartile 1 - 1.5 * IQR
+*  Upper Limit = Quartile 3 + 1.5 * IQR
+
+I created a second function which produces two arranged plots per variable. The first plot displays a histogram of the variable with red lines indicating where the outlier thresholds are located. The second plot displays the same histogram with the x-axis zoomed in to view only non-outliers. Using this method, I only identified one conspicuous finding. In the citric.acid histogram, there was a very noticeable spike at 0.49 with over 200 observations. This value is higher than both median and mean at 0.32 and 0.33, respectively. Upon further investigation, there did not appear to be noticeable differences between the observations with this citric.acid measurement and the rest of the dataset.
+
+For a couple of the variables, the outlier method was not effective. In these cases, I created custom plots to better view the distribution and quartiles. This was done for residual.sugar and alcohol. With residual.sugar, I performed a log10 transformation to get a better view of the right tail. This produced a bimodal distribution with the modes located near the first and third quartiles. I then used the sweetness categories to view residual.sugar across the different groupings. This grouping will be useful to assess residual.sugar against other variables during the bivariate and multivariate analyses.
+
+With alcohol, the distribution did not contain outliers, so the zoom did nothing. Instead, I adjusted the binwidth, x-axis breaks and added quartile lines. This brought out a stairstep-like pattern on the right side, which looked familiar. After reviewing a few of the other plots, I realized this pattern is evident in a number of the distributions.
+
+# Bivariate Plots Section
+
+```{r correlation_summary, echo=FALSE, message=FALSE, warning=FALSE}
+# Subset the data to the variables of interest
+wine.sub <- wine[, c("sweetness", "residual.sugar", "alcohol", "density",
+                     "chlorides", "total.sulfur.dioxide", "quality")]
+
+# Run the correlation matrix for numeric variables in subset
+cormat <- rcorr(as.matrix(wine.sub[, 2:7]))$r
+
+# Transform correlation matrix by creating a row for each row-column 
+# correlation pair and filter to correlations stronger than +/- 0.3
+ut <- upper.tri(cormat)
+data.frame(
+  row = rownames(cormat)[row(cormat)[ut]],
+  column = rownames(cormat)[col(cormat)[ut]],
+  cor = (cormat)[ut]
+) %>%
+  filter(., abs(cor) >= 0.3) %>%
+  arrange(.,desc(abs(cor)))
+```
+
+The table above contains the rows and columns of the correlation matrix for the variables of interest in this dataset. It is sorted by the descending absolute value of the correlation for each column-row pair and filtered to display only correlations stronger than plus or minus 0.3, resulting in 9 rows. 
+
+```{r correlation_matrix, echo=FALSE, message=FALSE, warning=FALSE}
+# Display a matrix of correlations, histogram/density plots, and scatter plots
+# with regression lines
+pairs.panels(wine.sub[, 2:7], smooth = FALSE, scale = FALSE, ellipses = TRUE, 
+             method = 'pearson', pch = '.', lm = TRUE, cor = TRUE, 
+             jiggle = FALSE, hist.col = 5, stars = FALSE, ci = FALSE)
+```
+
+The matrix above displays the relationships between the variables of interest. I first want to look at the relationships between density, residual.sugar, and alcohol since the dataset documentation specifically mentions that density is dependent on both.
+
+```{r residual.sugar_and_density, echo=FALSE, message=FALSE, warning=FALSE, fig.height=2, fig.width=7}
+# Calculate the outliers for the density variable
+do <- outliers(x = wine.sub$density)
+
+# Created the base plot
+p1 <- ggplot(aes(x = residual.sugar, y = density), data = wine.sub)
+
+# Create the enhanced plot with scale transforms
+p2 <- p1 + geom_point(alpha = 0.1, position = position_jitter(width = 0.02)) + 
+  geom_smooth(formula = y ~ x, color = 'red') + 
+  scale_x_log10(breaks = c(1, 3, 10, 30)) +
+  scale_y_continuous(limits = c(do[[1]], do[[2]]))
+
+# Add the basic plot to the base plot and display side-by-side
+p1 <- p1 + geom_point()
+grid.arrange(p1, p2, ncol = 2)
+
+# Test the correlation between residual sugar and density
+cor.test(wine.sub$residual.sugar, wine.sub$density)
+```
+
+The initial plot does display the positive correlation, but there is a lot of overplotting and the scale could be better. In the second plot, I applied the same transformations as were applied to the univariate plots. The y-axis was zoomed in to eliminate outliers and the x-axis was log10 transformed to better view the right tail of the distribution. Here two clusters are visible which align with the bimodal shape of the transformed residual.sugar distribution. With a strong, positive correlation of 0.839, as residual.sugar increases, so does density. This should translate to a positive trend across the sweetness categories.
+
+```{r sweetness_and_density, echo=FALSE, message=FALSE, warning=FALSE}
+# Boxplot of density by sweetness
+ggplot(aes(x = sweetness, y = density), data = wine.sub) + geom_boxplot()
+```
+
+As expected from the previous plot and test, sweeter wines are more dense.
+
+```{r alcohol_and_density, echo=FALSE, message=FALSE, warning=FALSE, fig.height=2, fig.width=7}
+# Build the base plot of alcohol and density
+p1 <- ggplot(aes(x = alcohol, y = density), data = wine.sub)
+
+# Add enhanced plot with jitter, alpha, and scale transforms
+p2 <- p1 + geom_jitter(alpha = 0.1, width = 0.05) + 
+  geom_smooth(formula = y ~ x, color = 'red') + 
+  scale_y_continuous(limits = c(do[[1]], do[[2]]))
+
+# Add basic plot to base plot and display side-by-side
+p1 <- p1 + geom_point()
+grid.arrange(p1, p2, ncol = 2)
+
+# Test the correlation between alcohol and density
+cor.test(wine.sub$alcohol, wine.sub$density)
+```
+
+Again, the initial plot is not very clear, so I applied the outlier transformation like before. Here we can see a strong negative correlation of -0.78. As alcohol increases, density decreases. I also want to look at the relationship between alcohol and residual.sugar since they are products of the same fermentation process.
+
+```{r alcohol_and_sugar, echo=FALSE, message=FALSE, warning=FALSE, fig.height=2, fig.width=7}
+# Build the base plot of residual sugar and alcohol
+p1 <- ggplot(aes(x = residual.sugar, y = alcohol), data = wine.sub)
+
+# Add the enhanced plot with jitter, alpha and scale transform
+p2 <- p1 + geom_point(alpha = 0.1, position = position_jitter(width = 0.02)) + 
+  geom_smooth(formula = y ~ x, color = 'red') + scale_x_log10()
+
+# Add the basic plot to the base plot and display side-by-side
+p1 <- p1 + geom_point()
+grid.arrange(p1, p2, ncol = 2)
+
+# Test the correlation between residual sugar and alcohol
+cor.test(wine.sub$residual.sugar, wine.sub$alcohol)
+```
+
+There is a moderate negative correlation of -0.451 between alcohol and residual.sugar. As residual.sugar increases, alcohol decreases. A similar pattern should be visible in a plot of alcohol and sweetness. 
+
+```{r alcohol_and_sweetness, echo=FALSE, message=FALSE, warning=FALSE}
+# boxplot of alcohol by sweetness
+ggplot(aes(x = sweetness, y = alcohol), data = wine.sub) +
+  geom_boxplot()
+```
+
+The negative correlation is far more apparent here. The exception is the sweet grouping, which does not contain enough data to summarize (n = 1).
+Next, I want to look at total.sulfur dioxide and how it relates to density, residual.sugar, and alcohol.
+
+```{r total.sulfur.dioxide.cor, echo=FALSE, message=FALSE, warning=FALSE, fig.height=6, fig.width=3.5, fig.align='center'}
+# Calculate outliers needed for plot zoom
+yo <- outliers(x = wine.sub$total.sulfur.dioxide)
+
+# Define portions of plot which will be reused
+p <- ggplot(data = wine.sub) + 
+  scale_y_continuous(limits = c(yo[[1]], yo[[2]]))
+
+# Define aesthetics for each plot
+map1 <- aes(x = density, y = total.sulfur.dioxide)
+map2 <- aes(x = residual.sugar, y = total.sulfur.dioxide)
+map3 <- aes(x = alcohol, y = total.sulfur.dioxide)
+
+# Build and arrange the plots
+p1 <- p + geom_point(mapping = map1, alpha = 0.1, 
+                     position = position_jitter(width = 0.0001)) +
+  geom_smooth(mapping = map1, formula = y ~ x, color = 'red') + 
+  scale_x_continuous(limits = c(do[[1]], do[[2]]))
+p2 <- p + geom_point(mapping = map2, alpha = 0.1,
+                     position = position_jitter(width = 0.02, height = 0)) +
+  geom_smooth(mapping = map2, formula = y ~ x, color = 'red') + 
+  scale_x_log10()
+p3 <- p + geom_point(mapping = map3, alpha = 0.1, 
+                     position = position_jitter(width = 0.05)) +
+  geom_smooth(mapping = map3, formula = y ~ x, color = 'red')
+grid.arrange(p1, p2, p3, ncol = 1)
+
+# Correlation tests
+cor.test(wine.sub$density, wine.sub$total.sulfur.dioxide)
+cor.test(wine.sub$residual.sugar, wine.sub$total.sulfur.dioxide)
+cor.test(wine.sub$alcohol, wine.sub$total.sulfur.dioxide)
+```
+
+density has a moderate correlation of 0.53 with total.sulfur.dioxide. It can be seen on the plot that as density increases, so does total.sulfur.dioxide. Similarly, residual sugar is positively correlated with total.sulfur.dioxide, but the strength is low. With a correlation of 0.401, as residual.sugar increases, total.sulfur.dioxide also increases. alcohol, on the other hand, has a low negative correlation with total.sulfur.dioxide of -0.449. As alcohol increases, total.sulfur.dioxide decreases. I also want to see the relationship total.sulfur dioxide has with sweetness. It should follow the same correlation pattern as residual.sugar like was seen in previous comparisons. 
+
+```{r total.sulfur.dioxide_and_sweetness, echo=FALSE, message=FALSE, warning=FALSE}
+# Boxplot of total.sulfur.dioxide by sweetness
+ggplot(aes(x = sweetness, y = total.sulfur.dioxide), data = wine.sub) + 
+  geom_boxplot() + coord_cartesian(ylim = c(yo[[1]], yo[[2]]))
+```
+
+I zoomed this plot in to get a better view of the bulk of the data. Sure enough, there is a positive shift when moving from dryer to sweeter wines. Again, there is not enough information to consider results in the sweet category (n = 1). The last relationship I would like to look at before diving into the relationships with quality is alcohol and chlorides. 
+
+```{r alcohol_and_chlorides, echo=FALSE, message=FALSE, warning=FALSE}
+# Calculate chlorides outliers
+co = outliers(x = wine.sub$chlorides)
+
+# scatterplot with cloride outliers removed
+ggplot(aes(x = alcohol, y = chlorides), data = wine.sub) +
+  geom_point(position = position_jitter(width = 0.04), alpha = 0.1) +
+  geom_smooth(formula = y ~ x, color = 'red') +
+  scale_y_continuous(limits = c(co[[1]], co[[2]]))
+
+# Correlation test between alcohol and chlorides
+cor.test(wine.sub$alcohol, wine.sub$chlorides)
+```
+
+Applying the same outlier detection methods as were used in the univariate analysis, this plot is zoomed in to eliminate outliers.  A low negative correlation is visible in the plot and reflected in the test with a value of -0.36. Now that the interaction between the attributes have been inspected, it is time to see how they measure up against the quality ratings.
+
+```{r quality_cor, echo=FALSE, message=FALSE, warning=FALSE, fig.height=6, fig.width=7}
+# Run correlation matrix of numeric variables against quality
+cormat <- rcorr(as.matrix(wine.sub[, 2:7]))$r
+
+# Transform each row-column correlation pair to row
+# Filter to quality correlations
+ut <- upper.tri(cormat)
+data.frame(
+  row = rownames(cormat)[row(cormat)[ut]],
+  column = rownames(cormat)[col(cormat)[ut]],
+  cor = (cormat)[ut]
+) %>%
+  filter(row == 'quality' | column == 'quality') %>%
+  arrange(abs(cor))
+
+# quality boxplots with all outliers removed
+p1 <- ggplot(aes(x = factor(quality), y = residual.sugar), data = wine.sub) +
+  geom_boxplot() + coord_cartesian(ylim = c(0, 20)) + xlab('quality')
+p2 <- ggplot(aes(x = factor(quality), y = total.sulfur.dioxide), 
+             data = wine.sub) +
+  geom_boxplot() + coord_cartesian(ylim = c(yo[[1]], yo[[2]])) + xlab('quality')
+p3 <- ggplot(aes(x = factor(quality), y = chlorides), data = wine.sub) +
+  geom_boxplot() + coord_cartesian(ylim = c(co[[1]], co[[2]])) + xlab('quality')
+p4 <- ggplot(aes(x = factor(quality), y = density), data = wine.sub) +
+  geom_boxplot() + coord_cartesian(ylim = c(do[[1]], do[[2]])) + xlab('quality')
+p5 <- ggplot(aes(x = factor(quality), y = alcohol), data = wine.sub) +
+  geom_boxplot() + xlab('quality')
+grid.arrange(p1, p2, p3, p4, p5, ncol = 2)
+```
+
+From the correlation table, only density and alcohol are noteworthy. density is negatively correlated with quality (-0.307). This can be seen in the plot. It is weak, but there is a general downward trend. density decreases as quality increases. alcohol, however, has a positive correlation with quality (0.436). As alcohol increases, quality does too. The residual.sugar and total.sulfur.dioxide plots have no visible trend. The chloride plot appears to have a downward trend, but the correlation is very weak at -0.21.
+
+# Bivariate Analysis
+
+### Talk about some of the relationships you observed in this part of the investigation. How did the feature(s) of interest vary with other features in the dataset?
+There are no strong correlations between the wine quality ratings and the other variables. However, there are a few low to moderate correlations. The attribute with the strongest relationship to quality is alcohol (0.436). As alcohol increases, quality ratings increase. 
+
+density has the next strongest relationship with quality (-0.307). As density increases, quality decreases. 
+
+chlorides also appears to have a relationship with quality when looking at the boxplots where quality decreases as chlorides increase, However, the correlation is only -0.21.
+
+### Did you observe any interesting relationships between the other features (not the main feature(s) of interest)?
+
+The bimodal shape of the residual.sugar distribution, which was revealed in the univariate plots, is also evident in the multivariate plots. The left hand mode of the residual.sugar distribution appears to align with the dry sweetness category, with the remaining categories captured by the right hand mode. There is only one observation in the sweet sweetness category. This category will be excluded from further analyses.
+
+### What was the strongest relationship you found?
+As was noted in the dataset documentation, density is dependent on residual.sugar and alcohol, which is easily seen in the correlation matrix and tables, as well as the plots. residual.sugar and density have a strong correlation of 0.84. As residual.sugar increases, density also increases. alcohol and density, however, have a negative relationship. It is still strong at -0.78. As alcohol increases, density decreases. alcohol and residual.sugar are also correlated, but not nearly as strongly as they are with density. Their relationship is negative, at -0.45. As alcohol increases, residual.sugar decreases.
+
+# Multivariate Plots Section
+
+```{r density_plots, echo=FALSE, fig.height=6, fig.width=7, message=FALSE, warning=FALSE}
+# Build reusable plot parts
+p <- ggplot(aes(color = sweetness),
+            data = subset(wine.sub, wine.sub$sweetness != 'sweet')) +
+  theme_dark() + scale_color_brewer(palette = 'YlGn') + 
+  theme(legend.position = 'none')
+
+# Build density plot by sweetness for each numeric variable in subset
+p1 <- p + geom_density(aes(x = residual.sugar), size = 1) + scale_x_log10()
+p2 <- p + geom_density(aes(x = alcohol), size = 1)
+p3 <- p + geom_density(aes(x = density), size = 1) + 
+  coord_cartesian(xlim = c(do[[1]], do[[2]]))
+p4 <- p + geom_density(aes(x = chlorides), size = 1) +
+  coord_cartesian(xlim = c(co[[1]], co[[2]]))
+p5 <- p + geom_density(aes(x = total.sulfur.dioxide), size = 1) +
+  coord_cartesian(xlim = c(yo[[1]], yo[[2]]))
+
+# Extract shared legend and arrange all items in grid
+shared_legend <- extract_legend(p1 + theme(legend.position = 'top',
+                                           legend.direction = 'vertical'))
+grid.arrange(p1, p2, p3, p4, p5, shared_legend, ncol = 2)
+```
+
+The above plots display each quantitative variable's density (not the variable, but the measurement) across the first three sweetness groupings. The sweet group has been excluded since it only contained a single observation. Transformations were performed in line with the univariate and bivariate plots. As would be expected, residual sugar has three distinct shapes that do not overlap because residual.sugar is used to determine the sweetness group. The remaining plots show that there are in fact fluctuations among the sweetness groupings for both alcohol and density. chlorides and total.sulfur.dioxide also fluctuate, but much more evenly, with medium wines occurring with higher, and dry wines with lower chlorides and total.sulfur.dioxide. Next I want to look at each of the comparisons done in the bivariate analysis with the added layer of sweetness.
+
+```{r density_residual.sugar_sweetness, echo=FALSE, message=FALSE, warning=FALSE}
+# Scatterplot of residual sugar and density by sweetness
+# x axis is log10 transformed, y axis zoomed to remove outliers
+ggplot(aes(x = residual.sugar, y = density, color = sweetness),
+       data = subset(wine.sub, wine.sub$sweetness != 'sweet')) +
+  scale_color_brewer(palette = "YlGn") + theme_dark() +
+  geom_point(position = position_jitter(width = 0.02)) + 
+  geom_smooth(formula = y ~ x, color = 'darkgreen') +
+  scale_x_log10() + coord_cartesian(ylim = c(do[[1]], do[[2]])) +
+  theme(legend.position = 'bottom')
+```
+
+What is interesting about this plot, is the two clusters which were previously visible are now different colors. The left cluster is the dry wine grouping, the right cluster is every other grouping. This is due to the log10 scale which was applied to reduce some of the spread in the sweeter groupings. As we would expect, the groups do not overlap since residual.sugar is used to determine sweetness. As was seen before, sweeter wines are more dense.
+
+```{r density_alcohol_sweetness, echo=FALSE, message=FALSE, warning=FALSE}
+# Scatterplot of alcohol and density by sweetness
+# y axis is zoomed to remove outliers
+ggplot(aes(x = alcohol, y = density, color = sweetness), 
+       data = subset(wine.sub, wine.sub$sweetness != 'sweet')) +
+  theme_dark() + theme(legend.position = 'bottom') +
+  scale_color_brewer(palette = "YlGn") +
+  geom_point(position = position_jitter(width = 0.05)) +
+  geom_smooth(formula = y ~ x, color = 'darkgreen') +
+  coord_cartesian(ylim = c(do[[1]], do[[2]]))
+```
+
+Overlaying sweetness on the density vs alcohol plot reveals what looks like three stripes of data. medium wines are in the top stripe with higher densities and dry wines are in the lower stripe with lower relative densities. The majority of the medium wines contain less alcohol than medium dry or dry wines. dry wines appear to contain more alcohol.
+
+```{r alcohol_residual.sugar_sweetness, echo=FALSE, message=FALSE, warning=FALSE}
+# Scatterplot of residual sugar and alcohol by sweetness
+# x axis is log10 transformed
+ggplot(aes(x = residual.sugar, y = alcohol, color = sweetness),
+       data = subset(wine.sub, wine.sub$sweetness != 'sweet')) +
+  geom_point(position = position_jitter(width = 0.02, height = 0.03)) + 
+  geom_smooth(formula = y ~ x, color = 'darkgreen') +
+  scale_color_brewer(palette = "YlGn") + theme_dark() + scale_x_log10() +
+  theme(legend.position = 'bottom')
+```
+
+Again, the two clusters in residual.sugar are highlighted by the sweetness groupings. It is easier to see here that sweeter wines tend to have less alcohol.
+
+```{r total.sulfur.dioxide_sweetness, echo=FALSE, fig.height=10, fig.width=5, message=FALSE, warning=FALSE}
+# Build reusable parts of plot
+p <- ggplot(aes(y = total.sulfur.dioxide, color = sweetness),
+            data = subset(wine.sub, wine.sub$sweetness != 'sweet')) +
+  theme_dark() + scale_color_brewer(palette = "YlGn") +
+  coord_cartesian(ylim = c(yo[[1]], yo[[2]])) + theme(legend.position = 'none')
+
+# density vs total.sulfur.dioxide scatterplot with outliers removed
+p1 <- p + geom_point(aes(x = density)) +
+  geom_smooth(aes(x = density), formula = y ~ x, color = 'darkgreen') +
+  coord_cartesian(xlim = c(do[[1]], do[[2]]), ylim = c(yo[[1]], yo[[2]]))
+
+# residual.sugar vs total.sulfur.dioxide scatterplot
+# x axis log10 transformed and y axis outliers removed
+p2 <- p + geom_point(aes(x = residual.sugar),
+                     position = position_jitter(width = 0.02)) +
+  geom_smooth(aes(x = residual.sugar), formula = y ~ x, color = 'darkgreen') + 
+  scale_x_log10()
+
+# alcohol vs total.sulful.dioxide scatterplot with outliers removed
+p3 <- p + geom_point(aes(x = alcohol),
+                     position = position_jitter(width = 0.04)) +
+  geom_smooth(aes(x = alcohol), formula = y ~ x, color = 'darkgreen')
+
+# Extract shared legend and arrange grid
+shared_legend <- extract_legend(p1 + theme(legend.position = 'top'))
+grid.arrange(shared_legend, arrangeGrob(p1, p2, p3, ncol = 1),
+             nrow = 2, heights = c(1, 6))
+```
+
+Here we can see that the sweeter wines tend to have a higher total.sulfur.dioxide regardless of whether they are compared over density, residual.sugar, or alcohol.
+
+```{r chlorides_alcohol_sweetness, echo=FALSE, message=FALSE, warning=FALSE}
+# alcohol vs chlorides by sweetness scatterplot with outliers removed
+ggplot(aes(x = alcohol, y = chlorides, color = sweetness), 
+       data = subset(wine.sub, wine.sub$sweetness != 'sweet')) +
+  theme_dark() + theme(legend.position = 'bottom') +
+  geom_point(position = position_jitter(height = 0.001, width = 0.04)) +
+  geom_smooth(formula = y ~ x, color = 'darkgreen') +
+  scale_color_brewer(palette = "YlGn") + 
+  scale_y_continuous(limits = c(co[[1]], co[[2]]))
+```
+
+Here we can see that sweeter wines also tend to have higher chloride content. Now that we can clearly see the interplay between the variables of interest, it is time to see how they compare across the quality ratings.
+
+```{r density_residual.sugar_quality_sweetness, echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=7}
+# residual.sugar vs density scatterplot colored by quality faceted by sweetness
+# x axis log10 transformed
+ggplot(aes(x = residual.sugar, y = density, color = factor(quality)),
+       data = subset(wine.sub, wine.sub$sweetness != 'sweet')) +
+  geom_point(position = position_jitter(width = 0.04)) +
+  geom_smooth(formula = y ~ x, color = 'magenta') +
+  scale_color_brewer(palette = "RdYlGn") + theme_dark() +
+  scale_x_log10() + facet_wrap(~sweetness, scales = "free", ncol = 1)
+```
+
+Here, the density and residual.sugar correlation is displayed. When the plots are faceted over sweetness and a diverging color scale is applied over the quality rating, we can see that the majority of higher quality ratings (7-9) fall below the mean (magenta line) and the majority of lower quality ratings (3-5) fall above the mean. This suggests that a negative relationship exists such that lower quality wines have a higher density and higher quality wines have a lower density. This is consistent with the quality boxplots from the bivariate analysis.
+
+```{r density_alcohol_quality_sweetness, echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=7}
+# alcohol vs density scatterplot colored by quality faceted by sweetness
+ggplot(aes(x = alcohol, y = density, color = factor(quality)),
+       data = subset(wine.sub, wine.sub$sweetness != 'sweet')) +
+  scale_color_brewer(palette = "RdYlGn") + theme_dark() +
+  geom_point(position = position_jitter(width = 0.04)) +
+  geom_smooth(formula = y ~ x, color = 'magenta') +
+  facet_wrap(~sweetness, ncol = 1, scales = 'free')
+```
+
+We already know to expect lower density measurements in the higher quality wines. The above plot also suggests that higher quality wines contain more alcohol. Again, this is consistent with the quality boxplots from the bivariate analysis.
+
+```{r alcohol_residual.sugar_quality_sweetness, echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=7}
+# residual.sugar vs alcohol scatterplot colored by quality faceted by sweetness
+ggplot(aes(x = residual.sugar, y = alcohol, color = factor(quality)),
+       data = subset(wine.sub, wine.sub$sweetness != 'sweet')) +
+  scale_color_brewer(palette = "RdYlGn") + theme_dark() +
+  geom_point(position = position_jitter(height = 0.01, width = 0.04)) +
+  geom_smooth(formula = y ~ x, color = 'magenta') + scale_x_log10() +
+  facet_wrap(~sweetness, ncol = 1, scales = 'free')
+```
+
+Again, as was seen in the bivariate analysis boxplots for quality, the higher quality wines have more alcohol with the exception of medium sweetness wines. In the medium group, there does not appear to be any strong patterns.
+
+```{r total.sulfur.dioxide_density_quality_sweetness, echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=7}
+# density vs total.sulfur.dioxide scatterplot colored by quality faceted by
+# sweetness y axis zoomed to exclude outliers
+ggplot(aes(x = density, y = total.sulfur.dioxide, color = factor(quality)),
+       data = subset(wine.sub, wine.sub$sweetness != 'sweet')) +
+  geom_point() + geom_smooth(formula = y ~ x, color = 'magenta') +
+  scale_color_brewer(palette = "RdYlGn") + theme_dark() +
+  coord_cartesian(ylim = c(yo[[1]], yo[[2]])) +
+  facet_wrap(~sweetness, ncol = 1, scales = 'free')
+```
+
+As we've seen before, the higher quality wines have a lower density and contain less total.sulfur.dioxide.
+
+```{r total.sulfur.dioxide_alcohol_quality_sweetness, echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=7}
+# alcohol vs total.sulfur.dioxide scatterplot colored by quality faceted by 
+# sweetenss y axis zoomed to exclude outliers
+ggplot(aes(x = alcohol, y = total.sulfur.dioxide, color = factor(quality)),
+       data = subset(wine.sub, wine.sub$sweetness != 'sweet')) +
+  scale_color_brewer(palette = "RdYlGn") + theme_dark() +
+  geom_point(position = position_jitter(width = 0.04)) +
+  geom_smooth(formula = y ~ x, color = 'magenta') +
+  coord_cartesian(ylim = c(yo[[1]], yo[[2]])) +
+  facet_wrap(~sweetness, ncol = 1, scales = 'free')
+```
+
+In keeping with previous observations, higher alcohol tends to align with higher quality. total.sulfur.dioxide, however, appears to have a negative relationship with quality.
+
+```{r chlorides_alcohol_quality_sweetness, echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=7}
+# alcohol vs chlorides scatterplot colored by quality faceted by sweetness
+# y axis zoomed to exclude outliers
+ggplot(aes(x = alcohol, y = chlorides, color = factor(quality)),
+       data = subset(wine.sub, wine.sub$sweetness != 'sweet')) +
+  scale_color_brewer(palette = "RdYlGn") + theme_dark() +
+  geom_point(position = position_jitter(width = 0.04)) +
+  geom_smooth(formula = y ~ x, color = 'magenta') +
+  coord_cartesian(ylim = c(co[[1]], co[[2]]))+
+  facet_wrap(~sweetness, ncol = 1, scales = 'free')
+```
+
+The trend with alcohol continues to hold true where higher alcohol contents have higher quality ratings and lower chlorides appear to align with higher quality scores.
+
+```{r modeling, echo=FALSE, message=FALSE, warning=FALSE}
+# Subset data
+wine.model <- subset(wine.sub, wine.sub$sweetness != 'sweet' &
+                       wine.sub$density >= do[[1]] & 
+                       wine.sub$density <= do[[2]] &
+                       wine.sub$total.sulfur.dioxide >= yo[[1]] &
+                       wine.sub$total.sulfur.dioxide <= yo[[2]] &
+                       wine.sub$chlorides >= co[[1]] &
+                       wine.sub$chlorides <= co[[2]])
+
+# quality ~ residual.sugar - 0.01027
+lm1 <- lm(formula = quality ~ residual.sugar, data = wine.model)
+summary(lm1)
+
+# quality ~ sweetness - 0.006507
+lm1.5 <- lm(formula = quality ~ sweetness, data = wine.model)
+summary(lm1.5)
+
+# quality ~ total.sulfur.dioxide - 0.02525
+lm2 <- lm(formula = quality ~ total.sulfur.dioxide, data = wine.model)
+summary(lm2)
+
+# quality ~ chlorides - 0.07935
+lm3 <- lm(formula = quality ~ chlorides, data = wine.model)
+summary(lm3)
+
+# quality ~ density - 0.09911
+lm4 <- lm(formula = quality ~ density, data = wine.model)
+summary(lm4)
+
+# quality ~ alcohol - 0.1911
+lm5 <- lm(formula = quality ~ alcohol, data = wine.model)
+summary(lm5)
+```
+
+It appears that alcohol has the greatest effect on quality with an r-squared value of 0.19 followed by density with an r-squared value of 0.099. By themselves, they are not that large. 
+
+```{r 3D_model, echo=FALSE, message=FALSE, warning=FALSE}
+# Build and summarize quality linear model
+summary(lm(quality ~ alcohol + log10(residual.sugar), data = wine.model))
+
+# Map linear model to 3D scatterplot
+x <- log10(wine.model$residual.sugar)
+y <- wine.model$alcohol
+z <- wine.model$quality
+fit <- lm(z ~ x + y)
+grid.lines = 26
+x.pred <- seq(min(x), max(x), length.out = grid.lines)
+y.pred <- seq(min(y), max(y), length.out = grid.lines)
+xy <- expand.grid(x = x.pred, y = y.pred)
+z.pred <- matrix(predict(fit, newdata = xy),
+                 nrow = grid.lines, ncol = grid.lines)
+fitpoints <- predict(fit)
+
+# Build and display scatterplot
+scatter3D(x, y, z, col = brewer.pal(7, "RdYlGn"), alpha = 0.7, bty = 'u', 
+          col.panel = 'grey40', col.grid = 'grey0', expand = 0.5,
+          pch = 18, cex = 0.85, theta = 60, phi = 15, ticktype = "detailed",
+          xlab = "log10(residual.sugar)", ylab = "alcohol", zlab = "quality", 
+          surf = list(x = x.pred, y = y.pred, z = z.pred,
+                      facets = NA, fit = fitpoints), 
+          main = "wine.model", clab = "quality")
+```
+
+After looking at a few different formulas, `quality ~ log10(residual.sugar) + alcohol` appears to be the most representative of the data with an r-squared of 0.21. It is not a strong model,which can be seen in the plot. 
+
+# Multivariate Analysis
+
+### Talk about some of the relationships you observed in this part of the investigation. Were there features that strengthened each other in terms of looking at your feature(s) of interest?
+Higher quality wines appear to have more alcohol and lower density. When the factor, sweetness is overlayed, some clear patterns are visible. The most obvious patterns are visible when residual.sugar is included because it is used to construct the sweetness variable. However it is still helpful in identifying the source of the bimodal shape seen throughout the analyses.
+
+When quality is overlayed the relationships with alcohol and density become even more visible with higher alcohol and lower density wines receiving higher quality ratings. While there does not appear to be any relationship between quality and sugar, the relationships between quality and alcohol appears to be enforced by faceting the plots over sweetness. This makes sense since the sweetness categories are used when rating wine quality.
+
+### Were there any interesting or surprising interactions between features?
+It was surprising that residual.sugar did not seem to affect quality. However, splitting the data into the sweetness groupings using residual.sugar does appear to strengthen a number of the relationships with quality.
+
+### OPTIONAL: Did you create any models with your dataset? Discuss the strengths and limitations of your model.
+I did create a linear model for quality using the log10 transformed residual.sugar and alcohol. It appears to capture some but not all of the shape of the data when looking at the associated plot, accounting for 21% of the variance in quality. The model could be improved by including additional variables and/or performing additional transformations. 
+
+------
+
+# Final Plots and Summary
+
+### Plot One
+```{r Plot_One, echo=FALSE, message=FALSE, warning=FALSE}
+# residual sugar distribution colored by sweetness x axis log10 transformed
+ggplot(aes(x = residual.sugar, fill = sweetness), data = wine.model) +
+  geom_histogram(binwidth = 0.05, color = 'black') +
+  scale_x_log10(breaks = c(0.55, 1, 1.7, 3, 5.5, 10, 17)) +
+  theme_dark() + scale_fill_brewer(palette = "YlGn") + 
+  labs(title = "Histogram of residual sugar by sweetness", 
+       subtitle = "Displayed on a log10 scale") + 
+  xlab("residual sugar (g/dm^3)") +
+  theme(plot.title = element_text(hjust = 0.5), 
+        plot.subtitle = element_text(hjust = 0.5))
+```
+
+### Description One
+This plot uses the filtered dataset used for modeling. The residual sugar distribution displayed on a log10 scale by sweetness category explains the bimodal distribution identified during the univariate analysis. The left mode is the dry sweetness category. the left mode actually appears to be two modes coving the medium dry and medium sweetness categories.
+
+### Plot Two
+```{r Plot_Two, echo=FALSE, message=FALSE, warning=FALSE}
+# Scatterplot of residual.sugar and alcohol colored by quality faceted by
+# sweetness. x axis log10 transformed
+ggplot(aes(x = residual.sugar, y = alcohol, color = factor(quality)),
+       data = wine.model) +
+  scale_color_brewer(palette = "RdYlGn") + theme_dark() +
+  geom_point(position = position_jitter(height = 0.02, width = 0.04)) +
+  geom_smooth(formula = y ~ x, color = 'magenta') +
+  scale_x_log10() +
+  facet_wrap(~sweetness, scales = 'free_x') + 
+  labs(title = 'scatter plot of residual sugar vs. alcohol by sweetness and quality', subtitle = "residual sugar displayed on a log10 scale") +
+  xlab('residual sugar (g/dm^3)') + ylab('alcohol (% by volume)') +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+
+# Correlation tests for log10 residual sugar and alcohol
+# Performed for each sweetness group
+cor.test(
+  x = log10(subset(wine.model, wine.model$sweetness == 'dry')$residual.sugar),
+  y = subset(wine.model, wine.model$sweetness == 'dry')$alcohol)
+cor.test(
+  x = log10(subset(wine.model, 
+                   wine.model$sweetness == 'medium dry')$residual.sugar),
+  y = subset(wine.model, wine.model$sweetness == 'medium dry')$alcohol
+)
+cor.test(
+  x = log10(subset(wine.model, 
+                   wine.model$sweetness == 'medium')$residual.sugar),
+  y = subset(wine.model, wine.model$sweetness == 'medium')$alcohol
+)
+```
+
+### Description Two
+The highest quality wines tend to have higher alcohol content regardless of residual sugar or sweetness category. The majority of the lowest quality wines (3 and 4) are in the dry and medium dry wine categories, which could be due to the the skew in the residual sugar distribution. Wines in the medium sweetness group tend to have less alcohol. It is also noticeable that the correlation patterns appear to change between sweetness categories. There is a very weak positive correlation visible in the dry category of 0.201, but medium dry and medium wines have negative correlations between alcohol and residual.sugar with strengths of -0.355 and -0.154 respectively. The strongest correlation appears in the medium sweetness group with residual sugar decreasing as alcohol increases.
+
+### Plot Three
+```{r Plot_Three, echo=FALSE, message=FALSE, warning=FALSE}
+# Plot function
+model.plot <- function(data, title) {
+  # map data to dimensions
+  x <- data$residual.sugar
+  y <- data$alcohol
+  z <- data$quality
+  # fit dimensions to model
+  fit <- lm(z ~ log(x) + y)
+  # generate grid dimensions
+  x.pred <- seq(min(x), max(x), length.out = grid.lines)
+  y.pred <- seq(min(y), max(y), length.out = grid.lines)
+  # build grid from dimensions
+  xy <- expand.grid(x = x.pred, y = y.pred)
+  # calculate z dimension of grid
+  z.pred <- matrix(predict(fit, newdata = xy),
+                   nrow = grid.lines, ncol = grid.lines)
+  # used later to map points to grid
+  fitpoints <- predict(fit)
+  # configure plot settings
+  grid.lines = 16
+  col = brewer.pal(length(unique(data$quality)), "RdYlGn")
+  pch = 18
+  alpha = 0.7
+  ticktype = "detailed"
+  bty = 'u'
+  col.panel = 'grey40'
+  col.grid = 'grey30'
+  expand = 0.5
+  xlab = "log10 of residual sugar (g/dm^3)"
+  ylab = "alcohol (% by volume)"
+  zlab = "quality"
+  clab = "quality"
+  cex = 0.85
+  theta = 30
+  phi = 15
+  # Return plot with all configurations mapped
+  return(scatter3D(
+    x=x, y=y, z=z, col=col, alpha=alpha, bty=bty, col.panel=col.panel,
+    col.grid=col.grid, expand=expand, pch=pch, ticktype=ticktype, main=title,
+    xlab=xlab, ylab=ylab, zlab=zlab, clab=clab, cex=cex, theta=theta,
+    phi=phi, surf = list(x = x.pred, y = y.pred, z = z.pred, 
+                         facets = NA, fit = fitpoints)
+  ))
+}
+
+# Dry White Wine Quality Linear Model 3D Scatterplot
+wine.dry <- subset(wine.model, wine.model$sweetness == 'dry')
+formula <- with(wine.dry, quality ~ log10(residual.sugar) + alcohol)
+model.plot(data = wine.dry, title = "Dry White Wine Quality Linear Model")
+
+# Summarize Dry White Wine Quality Linear Model
+summary(lm(formula))
+
+# Medium Dry White Wine Quality Linear Model 3D Scatterplot
+wine.med.dry <- subset(wine.model, wine.model$sweetness == 'medium dry')
+formula <- with(wine.med.dry, quality ~ log10(residual.sugar) + alcohol)
+model.plot(data = wine.med.dry, 
+           title = "Medium Dry White Wine Quality Linear Model")
+
+# Summarize Medium Dry White Wine Quality Linear Model
+summary(lm(formula))
+
+# Medium White Wine Quality Linear Model 3d Scatterplot
+wine.med <- subset(wine.model, wine.model$sweetness == 'medium')
+formula <- with(wine.med, quality ~ log10(residual.sugar) + alcohol)
+model.plot(data = wine.med, title = "Medium White Wine Quality Linear Model")
+
+# Summarize Medium White Wine Quality Linear Model
+summary(lm(formula))
+           
+```
+
+### Description Three
+This plot displays the mathematical model of the formula, `quality ~ log10(residual.sugar) + alcohol` for each sweetness grouping.The model is not that strong with an R-squared values of 0.223, 0.2871, and 0.2871 for dry, medium dry, and medium wines respectively. However, it does indicate that higher quality white wines tend to have higher alcohol content by volume. As was seen in the 2D plot, the residual sugar - alcohol correlation tends to be negative with the exception of the dry sweetness group. The variation in correlation across the groups suggests that the overall model is not linear.
+
+------
+
+# Reflection
+The wine quality data set contains almost 4,900 wines with 12 attributes. 11 of the attributes represent measurements of the chemical properties of each wine. The last attribute is an average of three quality ratings, judged on a 10 point scale. Throughout this analysis, my aim was to identify which of the measurements contribute the most to quality, as well as to each other. I began by plotting and refining the plots for the distribution of each quantitative variable. The bimodal shape of the log10 residual sugar measurement led me to create the sweetness category based on the EU definition. This made sense since each of the groups are judged separately. The limitation with the implementation for this analysis is that tartaric acid is typically used with residual sugar measurements to classify the sweetness. This analysis uses residual sugar alone.
+
+The European Union defines the sweetness terms of wine as follows:
+  
+  * Dry < 4 g/L of sugar
+  * Medium dry 4-12 g/L of sugar
+  * Medium 12-45 g/L of sugar
+  * Sweet > 45 g/L of sugar
+
+[Official Journal of the European Union](https://eur-lex.europa.eu/LexUriServ/LexUriServ.do?uri=OJ:L:2006:384:0038:0043:EN:PDF)
+
+Even without using tartaric acid to categorize sweetness, there are some clear differences between the groups, not only in the strength and direction of the correlations, but also in the amount of variance explained by the model. This leads me to believe that the model is not linear. The model for medium dry wines alone has the highest r squared value at 0.28. This still accounts for less than a third of the variance in a portion of the data. 
+
+Further analyses could strengthen the mathematical model developed here by more accurately categorizing the sweetness groups. This should be done using tartaric acid, captured by the variable, citric.acid. Other regression functions should also be investigated since this model does not appear to fit well to a straight line. Additional attributes and/or transformations should also be tested since there appear to be a complex set of relationships contributing to the quality of a wine within a specific sweetness category.
